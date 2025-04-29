@@ -1,0 +1,37 @@
+body {
+    font-family: 'Poppins', sans-serif;
+}
+
+/* Add some breathing room around the main container */
+.dbc-container-fluid {
+    padding: 15px;
+}
+
+/* Style cards for better visual grouping */
+.card {
+    margin-bottom: 20px;
+    /* Add space below cards */
+    border: 1px solid #444;
+    /* Subtle border for dark theme */
+}
+
+/* Ensure table text respects the body font */
+.dash-table-container .dash-fixed-content table {
+    font-family: 'Poppins', sans-serif !important;
+}
+
+/* Style headers within cards if needed */
+.card-header {
+    font-size: 1.1rem;
+    font-weight: 500;
+    /* Slightly bolder */
+    background-color: rgba(70, 70, 70, 0.5);
+    /* Slightly different background for header */
+    border-bottom: 1px solid #444;
+}
+
+/* Style graph containers */
+.dash-graph {
+    border-radius: 5px;
+    /* Optional: slightly rounded corners */
+}
