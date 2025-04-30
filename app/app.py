@@ -415,6 +415,9 @@ app.layout = dbc.Container(
                                                 "color": "white",
                                             },
                                         ],
+                                        persistence=True,  # Persist user edits
+                                        persistence_type="memory",  # Keep edits in browser session
+                                        persisted_props=["data"],
                                     ),
                                     dbc.Button(
                                         [
@@ -767,19 +770,53 @@ def update_data_visualizer(jsonified_constrained_data):
     return fig
 
 
-# Callback 5: Predict Button -> Save Scenario Data to Store
+# New Callback for Predict Button: Update Table A-F columns & Store Data
 @callback(
+    Output("scenario-table", "data", allow_duplicate=True),
     Output("store-scenario-data", "data"),
     Input("predict-button", "n_clicks"),
     State("scenario-table", "data"),
-    prevent_initial_call=True,  # Don't run on app load
+    prevent_initial_call=True,
 )
-def save_scenario_data(n_clicks, scenario_data):
-    if n_clicks > 0 and scenario_data:
-        # Convert to DataFrame for easier handling later, maybe store as JSON dict list
-        # For now, just pass the raw list of dicts from the table
-        return scenario_data
-    return dash.no_update
+def predict_and_update_table(n_clicks, current_table_data):
+    if n_clicks == 0 or not current_table_data:
+        return dash.no_update, dash.no_update
+
+    updated_table_data = []
+    for row in current_table_data:
+        if row["Scenario"] != "Base":
+            # --- Dummy Calculation for A-F ---
+            # Replace with your actual ML model prediction logic
+            try:
+                ij1 = float(row.get("IJ1", 0) or 0)
+                ij2 = float(row.get("IJ2", 0) or 0)
+                ij3 = float(row.get("IJ3", 0) or 0)
+
+                # Example: Simple linear combination
+                row["A"] = round(0.5 * ij1 + 0.2 * ij2 + 0.1 * ij3, 1)
+                row["B"] = round(0.1 * ij1 + 0.6 * ij2 + 0.3 * ij3, 1)
+                row["C"] = round(0.3 * ij1 + 0.1 * ij2 + 0.5 * ij3, 1)
+                row["D"] = round(0.7 * ij1 - 0.2 * ij2 + 0.1 * ij3, 1)
+                row["E"] = round(0.2 * ij1 + 0.4 * ij2 - 0.4 * ij3, 1)
+                row["F"] = round(-0.1 * ij1 + 0.1 * ij2 + 0.9 * ij3, 1)
+
+            except (ValueError, TypeError):
+                # Handle cases where inputs are not valid numbers - set A-F to None or 0?
+                print(
+                    f"Warning: Invalid input for {row['Scenario']}, cannot calculate A-F."
+                )
+                row["A"] = None
+                row["B"] = None
+                row["C"] = None
+                row["D"] = None
+                row["E"] = None
+                row["F"] = None
+            # --- End Dummy Calculation ---
+
+        updated_table_data.append(row)
+
+    # Return updated data for the table and the store
+    return updated_table_data, updated_table_data
 
 
 # Callback 6: Scenario Data Store Update -> Update Scenario Plot
@@ -801,41 +838,37 @@ def update_scenario_plot(scenario_data, jsonified_constrained_data):
         "legend": {
             "orientation": "h",
             "yanchor": "bottom",
-            "y": -0.2,
+            "y": -0.25,  # Adjust legend position slightly
             "xanchor": "center",
             "x": 0.5,
-        },  # Move legend below
+        },
     }
 
     if not scenario_data:
         return go.Figure(layout=layout)  # Return empty fig with layout
 
-    # Base data to use for scenarios
+    # Base data selection logic (remains the same)
+    base_df = None
     if jsonified_constrained_data:
-        base_df = pd.read_json(jsonified_constrained_data, orient="split")
-        if base_df.empty:  # If constraints resulted in empty df
-            layout["title"] = (
-                "Scenario Simulation Results (Base data empty after filtering)"
-            )
-            return go.Figure(layout=layout)
-    else:
-        # Fallback if no constrained data exists (e.g., filter not applied yet)
-        # Depending on desired behavior, could use original df or show message
-        # Let's use original df for base plotting if constrained is unavailable
-        base_df = (
-            df.copy()
-        )  # Use original df as fallback - check date range? Maybe filter by date selector?
-        start_date = df.index.min().date()  # Get default range if needed
-        end_date = df.index.max().date()
-        # This part might need refinement based on exact desired fallback behavior
+        try:
+            temp_df = pd.read_json(jsonified_constrained_data, orient="split")
+            if not temp_df.empty:
+                base_df = temp_df
+        except ValueError:
+            print("Warning: Could not decode constrained data for scenario plot.")
+
+    if base_df is None:
+        # Fallback if no constrained data exists or it's empty
+        base_df = df.copy()  # Use original df as fallback
         print(
-            "Warning: Constrained data not available for scenario plot, using original df as base."
+            "Warning: Valid constrained data not available for scenario plot, using original df as base."
         )
-        # Consider filtering base_df by date_range_selector values here if needed
+        # Optionally filter base_df by date_range_selector values here if needed
+        # This fallback might need refinement depending on desired behavior
 
     fig = go.Figure(layout=layout)  # Apply layout
 
-    # Plot Base line (only if Var1 exists)
+    # Plot Base line (remains the same)
     if not base_df.empty and "Var1" in base_df.columns:
         fig.add_trace(
             go.Scatter(
@@ -847,8 +880,8 @@ def update_scenario_plot(scenario_data, jsonified_constrained_data):
             )
         )
 
-    # Plot Scenarios
-    color_map = plotly.colors.qualitative.Plotly  # Use a qualitative color scale
+    # Plot Scenarios with Confidence Bounds
+    color_map = plotly.colors.qualitative.Plotly
 
     for i, scenario in enumerate(scenario_data):
         if scenario["Scenario"] != "Base":
@@ -856,31 +889,78 @@ def update_scenario_plot(scenario_data, jsonified_constrained_data):
             ij2 = scenario.get("IJ2")
             ij3 = scenario.get("IJ3")
             name = scenario["Scenario"]
-            color = color_map[i % len(color_map)]  # Cycle through colors
+            color = color_map[i % len(color_map)]
 
             if not base_df.empty and "Var1" in base_df.columns:
-                simulated_y = base_df["Var1"].copy()
+                base_y = base_df["Var1"].copy()
                 try:
+                    # --- Dummy Simulation with Bounds ---
+                    # Replace with actual ML prediction logic returning pred, lower, upper
+                    pred_offset = 0
                     if ij1 is not None:
-                        simulated_y += float(ij1) * 0.1
+                        pred_offset += float(ij1) * 0.1
                     if ij2 is not None:
-                        simulated_y += float(ij2) * 0.01
+                        pred_offset += float(ij2) * 0.01
                     if ij3 is not None:
-                        simulated_y += float(ij3) * 0.5
+                        pred_offset += float(ij3) * 0.5
 
+                    simulated_pred = base_y + pred_offset
+                    # Dummy bounds (e.g., +/- a value based on inputs)
+                    bound_width = (
+                        5
+                        + abs(ij1 or 0) * 0.05
+                        + abs(ij2 or 0) * 0.02
+                        + abs(ij3 or 0) * 0.1
+                    )
+                    simulated_lower = simulated_pred - bound_width
+                    simulated_upper = simulated_pred + bound_width
+                    # --- End Dummy Simulation ---
+
+                    # Plot Lower Bound (invisible line)
                     fig.add_trace(
                         go.Scatter(
                             x=base_df.index,
-                            y=simulated_y,
-                            mode="markers",  # <-- Changed to markers
-                            name=name,
-                            marker=dict(
-                                size=6, opacity=0.8, color=color
-                            ),  # Style markers
+                            y=simulated_lower,
+                            mode="lines",
+                            line=dict(width=0),
+                            hoverinfo="skip",  # Don't show hover for bounds lines
+                            showlegend=False,
+                            name=f"{name}_lower",  # Unique name for fill target
                         )
                     )
+                    # Plot Prediction Line
+                    fig.add_trace(
+                        go.Scatter(
+                            x=base_df.index,
+                            y=simulated_pred,
+                            mode="lines",
+                            line=dict(color=color),
+                            name=name,  # This trace will appear in the legend
+                        )
+                    )
+                    # Plot Upper Bound (invisible line, filled to lower bound)
+                    # Reverting order: Add Upper bound *after* the prediction line
+                    fig.add_trace(
+                        go.Scatter(
+                            x=base_df.index,
+                            y=simulated_upper,
+                            mode="lines",
+                            line=dict(width=0),
+                            fillcolor=f"rgba({plotly.colors.hex_to_rgb(color)}, 0.2)",  # Transparent fill color
+                            # Fill should technically be to the Lower bound, but 'tonexty' goes to prediction here.
+                            # We'll fix the fill visual separately if needed.
+                            fill="tonexty",
+                            hoverinfo="skip",
+                            showlegend=False,
+                            name=f"{name}_upper",
+                        )
+                    )
+
                 except (ValueError, TypeError):
                     print(f"Warning: Invalid numeric input for {name}. Skipping plot.")
+
+    # Adjust legend order if needed (Plotly usually handles this well)
+    # fig.update_layout(legend_traceorder="reversed")
 
     return fig
 
